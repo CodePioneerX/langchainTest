@@ -1,11 +1,12 @@
 import { Chroma } from "@langchain/community/vectorstores/chroma";
+import { ChromaClient } from "chromadb";
 import { OpenAIEmbeddings } from "@langchain/openai";
 import type { Document } from "@langchain/core/documents";
 import { logger } from "../utils/logger.js";
 
 /**
  * Initialize Chroma vector store
- * Uses Chroma Cloud for production or local persistence for development
+ * Uses Chroma Cloud for production or local server for development
  */
 export async function initializeVectorStore(
   embeddings: OpenAIEmbeddings
@@ -13,27 +14,50 @@ export async function initializeVectorStore(
   logger.info("Initializing Chroma vector store...");
 
   try {
-    // For now, use local Chroma server (development)
-    // Chroma Cloud configuration will be added when you sign up
-    logger.info("Using local Chroma server (development mode)");
+    // Check if using Chroma Cloud or local server
+    const useCloud = process.env.CHROMA_CLOUD === "true";
 
-    const chromaUrl = process.env.CHROMA_URL || "http://localhost:8000";
+    if (useCloud) {
+      logger.info("Using Chroma Cloud");
 
-    const vectorStore = new Chroma(embeddings, {
-      collectionName: "botpress_docs",
-      url: chromaUrl,
-      collectionMetadata: {
-        "hnsw:space": "cosine",
-      },
-    });
+      // Chroma Cloud configuration
+      const chromaClient = new ChromaClient({
+        path: "https://api.trychroma.com",
+        auth: {
+          provider: "token",
+          credentials: process.env.CHROMA_API_KEY!,
+          tokenHeaderType: "X_CHROMA_TOKEN",
+        },
+        tenant: process.env.CHROMA_TENANT!,
+        database: process.env.CHROMA_DATABASE!,
+      });
 
-    // Note: For Chroma Cloud (production), you'll need to:
-    // 1. Sign up at https://trychroma.com
-    // 2. Get API credentials
-    // 3. Set CHROMA_URL to your cloud endpoint
+      const vectorStore = new Chroma(embeddings, {
+        collectionName: "botpress_docs",
+        index: chromaClient,
+        collectionMetadata: {
+          "hnsw:space": "cosine",
+        },
+      });
 
-    logger.info("✓ Chroma vector store initialized");
-    return vectorStore;
+      logger.info("✓ Chroma Cloud initialized");
+      return vectorStore;
+    } else {
+      logger.info("Using local Chroma server");
+
+      const chromaUrl = process.env.CHROMA_URL || "http://localhost:8000";
+
+      const vectorStore = new Chroma(embeddings, {
+        collectionName: "botpress_docs",
+        url: chromaUrl,
+        collectionMetadata: {
+          "hnsw:space": "cosine",
+        },
+      });
+
+      logger.info("✓ Local Chroma initialized");
+      return vectorStore;
+    }
   } catch (error: any) {
     logger.error("Failed to initialize Chroma:", error);
     throw new Error(`Failed to initialize Chroma: ${error.message}`);
