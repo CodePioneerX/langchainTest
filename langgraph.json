@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "bot_workflow": "./src/graph/workflow.ts:graph"
+  },
+  "env": ".env"
+}
