@@ -1,76 +1,50 @@
-import { Chroma } from "@langchain/community/vectorstores/chroma";
-import { ChromaClient } from "chromadb";
+import { SupabaseVectorStore } from "@langchain/community/vectorstores/supabase";
 import { OpenAIEmbeddings } from "@langchain/openai";
 import type { Document } from "@langchain/core/documents";
+import { createClient } from "@supabase/supabase-js";
 import { logger } from "../utils/logger.js";
 
 /**
- * Initialize Chroma vector store
- * Uses Chroma Cloud for production or local server for development
+ * Initialize Supabase pgvector store
+ * Uses the same PostgreSQL database as the checkpointer
  */
 export async function initializeVectorStore(
   embeddings: OpenAIEmbeddings
-): Promise<Chroma> {
-  logger.info("Initializing Chroma vector store...");
+): Promise<SupabaseVectorStore> {
+  logger.info("Initializing Supabase pgvector store...");
 
   try {
-    // Check if using Chroma Cloud or local server
-    const useCloud = process.env.CHROMA_CLOUD === "true";
+    const supabaseUrl = process.env.SUPABASE_URL!;
+    const supabaseKey = process.env.SUPABASE_API_KEY!;
 
-    if (useCloud) {
-      logger.info("Using Chroma Cloud");
-
-      // Chroma Cloud configuration
-      const chromaClient = new ChromaClient({
-        path: "https://api.trychroma.com",
-        auth: {
-          provider: "token",
-          credentials: process.env.CHROMA_API_KEY!,
-          tokenHeaderType: "X_CHROMA_TOKEN",
-        },
-        tenant: process.env.CHROMA_TENANT!,
-        database: process.env.CHROMA_DATABASE!,
-      });
-
-      const vectorStore = new Chroma(embeddings, {
-        collectionName: "botpress_docs",
-        index: chromaClient,
-        collectionMetadata: {
-          "hnsw:space": "cosine",
-        },
-      });
-
-      logger.info("✓ Chroma Cloud initialized");
-      return vectorStore;
-    } else {
-      logger.info("Using local Chroma server");
-
-      const chromaUrl = process.env.CHROMA_URL || "http://localhost:8000";
-
-      const vectorStore = new Chroma(embeddings, {
-        collectionName: "botpress_docs",
-        url: chromaUrl,
-        collectionMetadata: {
-          "hnsw:space": "cosine",
-        },
-      });
-
-      logger.info("✓ Local Chroma initialized");
-      return vectorStore;
+    if (!supabaseUrl || !supabaseKey) {
+      throw new Error("SUPABASE_URL and SUPABASE_API_KEY must be set");
     }
+
+    logger.info(`Connecting to Supabase at: ${supabaseUrl}`);
+
+    const client = createClient(supabaseUrl, supabaseKey);
+
+    const vectorStore = new SupabaseVectorStore(embeddings, {
+      client,
+      tableName: "documents",
+      queryName: "match_documents",
+    });
+
+    logger.info("✓ Supabase pgvector store initialized");
+    return vectorStore;
   } catch (error: any) {
-    logger.error("Failed to initialize Chroma:", error);
-    throw new Error(`Failed to initialize Chroma: ${error.message}`);
+    logger.error("Failed to initialize Supabase pgvector:", error);
+    throw new Error(`Failed to initialize pgvector: ${error.message}`);
   }
 }
 
 /**
- * Add documents to Chroma vector store in batches
- * Chroma automatically generates embeddings for the documents
- * Max batch size is 5461 documents per batch
+ * Add documents to Supabase pgvector store in batches
+ * pgvector will generate and store embeddings automatically
  */
 export async function addDocuments(docs: Document[]): Promise<void> {
-  logger.info(`Adding ${docs.length} documents to Chroma...`);
+  logger.info(`Adding ${docs.length} documents to Supabase pgvector...`);
 
   try {
     const embeddings = new OpenAIEmbeddings({
@@ -80,8 +54,8 @@ export async function addDocuments(docs: Document[]): Promise<void> {
 
     const vectorStore = await initializeVectorStore(embeddings);
 
-    // Chroma has HTTP payload size limits - process in smaller batches
-    const BATCH_SIZE = 1000; // Smaller batches to avoid HTTP 413 errors
+    // Process in smaller batches to avoid statement timeout
+    const BATCH_SIZE = 100; // Smaller batches to stay under Supabase timeout
     const batches = Math.ceil(docs.length / BATCH_SIZE);
 
     logger.info(`Processing ${batches} batches of ${BATCH_SIZE} documents each...`);
@@ -93,22 +67,20 @@ export async function addDocuments(docs: Document[]): Promise<void> {
 
       logger.info(`Adding batch ${i + 1}/${batches} (${batch.length} documents)...`);
 
-      // Add documents with IDs (Chroma generates embeddings automatically)
-      const ids = batch.map((_, j) => `doc_${Date.now()}_${start + j}`);
-      await vectorStore.addDocuments(batch, { ids });
+      await vectorStore.addDocuments(batch);
 
       logger.info(`✓ Batch ${i + 1}/${batches} completed`);
     }
 
-    logger.info(`✓ Successfully added all ${docs.length} documents to Chroma`);
+    logger.info(`✓ Successfully added all ${docs.length} documents to pgvector`);
   } catch (error: any) {
-    logger.error("Error adding documents to Chroma:", error);
+    logger.error("Error adding documents to pgvector:", error);
     throw new Error(`Failed to add documents: ${error.message}`);
   }
 }
 
 /**
- * Get a retriever instance from Chroma
+ * Get a retriever instance from Supabase pgvector
  */
 export async function getRetriever(k: number = 5) {
   const embeddings = new OpenAIEmbeddings({

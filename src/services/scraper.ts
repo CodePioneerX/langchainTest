@@ -1,31 +1,12 @@
-import { SitemapLoader } from "@langchain/community/document_loaders/web/sitemap";
+import { PlaywrightWebBaseLoader } from "@langchain/community/document_loaders/web/playwright";
 import { Document } from "langchain/document";
 import { logger } from "../utils/logger.js";
-import * as cheerio from "cheerio";
+import axios from "axios";
+import * as xml2js from "xml2js";
 
 /**
- * Custom parser that removes navigation/headers/footers but KEEPS code blocks
- * Code blocks are valuable for technical documentation retrieval
- */
-function parseHtml(html: string): string {
-  const $ = cheerio.load(html);
-
-  // Remove only navigation, headers, footers (keep code blocks!)
-  $(
-    'script, style, nav, header, footer, [role="navigation"], .sidebar, .nav, [class*="navigation"]'
-  ).remove();
-
-  // Extract main content area
-  const main = $('main, article, [role="main"], .content').first();
-  const text = main.length > 0 ? main.text() : $("body").text();
-
-  // Clean up whitespace
-  return text.replace(/\s+/g, " ").trim();
-}
-
-/**
- * Load and scrape pages from sitemap using LangChain's SitemapLoader
- * This is the official LangChain pattern for documentation sites
+ * Load and scrape pages from sitemap using Playwright
+ * Playwright executes JavaScript, giving us clean rendered content from Next.js sites
  */
 export async function loadPagesFromSitemap(
   sitemapUrl: string = "https://botpress.com/sitemap.xml",
@@ -34,19 +15,64 @@ export async function loadPagesFromSitemap(
   logger.info(`Loading pages from sitemap: ${sitemapUrl}`);
 
   try {
-    // Use SitemapLoader - handles concurrent scraping automatically
-    const loader = new SitemapLoader(sitemapUrl, {
-      // Custom parser to remove nav/footer but keep code blocks
-      parsingFunction: parseHtml,
-    } as any);
+    // Step 1: Fetch and parse sitemap XML
+    logger.info("Fetching sitemap XML...");
+    const response = await axios.get(sitemapUrl);
+    const parser = new xml2js.Parser();
+    const result = await parser.parseStringPromise(response.data);
 
-    logger.info("Starting concurrent scraping with SitemapLoader...");
-    let docs = await loader.load();
+    // Extract URLs from sitemap
+    const urls: string[] = result.urlset.url.map((entry: any) => entry.loc[0]);
+    logger.info(`Found ${urls.length} URLs in sitemap`);
 
-    // Limit to maxPages if needed
-    if (docs.length > maxPages) {
-      logger.info(`Limiting from ${docs.length} to ${maxPages} pages`);
-      docs = docs.slice(0, maxPages);
+    // Limit to maxPages
+    const urlsToScrape = urls.slice(0, maxPages);
+    logger.info(`Scraping ${urlsToScrape.length} pages with Playwright...`);
+
+    // Step 2: Use PlaywrightWebBaseLoader to scrape each URL
+    const docs: Document[] = [];
+
+    for (let i = 0; i < urlsToScrape.length; i++) {
+      const url = urlsToScrape[i];
+
+      try {
+        const loader = new PlaywrightWebBaseLoader(url, {
+          launchOptions: {
+            headless: true,
+          },
+          gotoOptions: {
+            waitUntil: "domcontentloaded",
+          },
+          evaluate: async (page): Promise<string> => {
+            // Wait for main content to load
+            await page.waitForSelector('main, article, [role="main"]', { timeout: 5000 }).catch(() => {});
+
+            // Extract main content (runs in browser context)
+            const content: string = await page.evaluate(`
+              (() => {
+                // Remove unwanted elements
+                const selectors = 'script, style, nav, header, footer, [role="navigation"], .sidebar, .nav, [class*="navigation"], iframe, noscript';
+                document.querySelectorAll(selectors).forEach((el) => el.remove());
+
+                // Get main content
+                const main = document.querySelector('main, article, [role="main"], .content');
+                return main ? main.textContent : document.body.textContent;
+              })()
+            `);
+
+            return content || "";
+          },
+        });
+
+        const pageDocs = await loader.load();
+        docs.push(...pageDocs);
+
+        if ((i + 1) % 50 === 0) {
+          logger.info(`Progress: ${i + 1}/${urlsToScrape.length} pages scraped`);
+        }
+      } catch (error: any) {
+        logger.warn(`Failed to scrape ${url}: ${error.message}`);
+      }
     }
 
     logger.info(`✓ Successfully scraped ${docs.length} pages`);

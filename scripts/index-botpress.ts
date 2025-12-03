@@ -5,7 +5,7 @@ import { chunkDocuments } from "../src/services/chunker.js";
 import { logger } from "../src/utils/logger.js";
 import type { ScrapeStats } from "../src/types/index.js";
 
-const SITEMAP_URL = "https://botpress.com/sitemap.xml";
+const DOCS_SITEMAP_URL = "https://botpress.com/docs/sitemap.xml";
 
 
 /**
@@ -25,8 +25,8 @@ async function indexBotpress() {
     logger.info("=".repeat(60));
 
     // Step 1: Load pages from sitemap (combines URL discovery + scraping)
-    logger.info("\n[1/4] Loading pages from sitemap...");
-    const docs = await loadPagesFromSitemap(SITEMAP_URL);
+    logger.info("\n[1/4] Loading pages from DOCS sitemap...");
+    const docs = await loadPagesFromSitemap(DOCS_SITEMAP_URL);
     stats.pagesProcessed = docs.length;
 
     if (docs.length === 0) {
@@ -50,12 +50,12 @@ async function indexBotpress() {
     stats.pagesProcessed = docs.length;
     logger.info(`✓ Created ${chunks.length} chunks`);
 
-    // Step 3: Store chunks in vector database (Chroma will generate embeddings automatically)
-    logger.info(`\n[3/3] Storing ${chunks.length} chunks in vector database...`);
-    logger.info("Chroma will generate embeddings automatically. This may take a while...");
+    // Step 3: Store chunks in Supabase pgvector (embeddings generated automatically)
+    logger.info(`\n[3/3] Storing ${chunks.length} chunks in Supabase pgvector...`);
+    logger.info("OpenAI embeddings will be generated automatically. This may take a while...");
     await addDocuments(chunks);
-    stats.embeddingsGenerated = chunks.length; // All chunks get embedded by Chroma
-    logger.info("✓ Stored in vector database with embeddings");
+    stats.embeddingsGenerated = chunks.length; // All chunks get embedded
+    logger.info("✓ Stored in Supabase pgvector with embeddings");
 
     // Final summary
     logger.info("\n" + "=".repeat(60));
