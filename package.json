@@ -1,51 +1,31 @@
 {
   "name": "langgraphdemo-v2",
   "version": "1.0.0",
-  "description": "Simple FAQ bot using LangGraph 2-Step RAG with Botpress KB indexing",
-  "main": "dist/index.js",
+  "description": "LangGraph RAG chatbot with Botpress documentation",
   "type": "module",
   "engines": {
     "node": ">=20.0.0"
   },
-  "packageManager": "[email protected]",
   "scripts": {
     "build": "tsc",
-    "index": "tsx scripts/index-botpress.ts",
-    "bot": "tsx src/bot/telegram.ts"
+    "index": "tsx scripts/index-botpress.ts"
   },
-  "keywords": [
-    "langgraph",
-    "rag",
-    "telegram",
-    "bot",
-    "faq",
-    "chroma"
-  ],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
     "@langchain/community": "^1.0.0",
     "@langchain/core": "^1.0.1",
     "@langchain/langgraph": "^1.0.2",
-    "@langchain/langgraph-checkpoint-postgres": "^1.0.0",
     "@langchain/openai": "^1.0.0",
-    "@langchain/textsplitters": "^0.1.0",
+    "@langchain/textsplitters": "^1.0.0",
     "@supabase/supabase-js": "^2.86.0",
-    "dotenv": "^16.4.7",
-    "langchain": "^0.3.7",
-    "pg": "^8.16.3"
+    "dotenv": "^16.4.7"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
-    "@types/pg": "^8.15.6",
     "@types/xml2js": "^0.4.14",
     "axios": "^1.13.2",
-    "cheerio": "^1.1.2",
     "playwright": "^1.57.0",
-    "telegraf": "^4.16.3",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "winston": "^3.11.0",
     "xml2js": "^0.6.2"
   }
 }
