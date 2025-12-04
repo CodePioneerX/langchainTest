@@ -1,5 +1,5 @@
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
-import { Document } from "langchain/document";
+import { Document } from "@langchain/core/documents";
 
 // RecursiveCharacterTextSplitter handles HTML natively
 const textSplitter = new RecursiveCharacterTextSplitter({

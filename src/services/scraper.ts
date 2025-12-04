@@ -1,5 +1,5 @@
 import { PlaywrightWebBaseLoader } from "@langchain/community/document_loaders/web/playwright";
-import { Document } from "langchain/document";
+import { Document } from "@langchain/core/documents";
 import { logger } from "../utils/logger.js";
 import axios from "axios";
 import * as xml2js from "xml2js";
