@@ -146,14 +146,16 @@ Guidelines:
  * This is required by langgraph.json
  *
  * For local bot usage, use createWorkflow() function instead
+ *
+ * NOTE: LangGraph Platform provides a managed checkpointer automatically.
+ * We don't need to create our own PostgresSaver for deployment.
  */
 export const graph = async () => {
   // Import dependencies dynamically for platform deployment
   const { getRetriever } = await import("../database/vector-store.js");
   const { ChatOpenAI } = await import("@langchain/openai");
-  const { PostgresSaver } = await import("@langchain/langgraph-checkpoint-postgres");
 
-  // Initialize retriever
+  // Initialize retriever (uses Supabase for vector storage)
   const retriever = await getRetriever(parseInt(process.env.TOP_K_RESULTS || "5", 10));
 
   // Initialize LLM
@@ -164,11 +166,9 @@ export const graph = async () => {
     maxRetries: 3,
   });
 
-  // Initialize checkpointer
-  const checkpointer = PostgresSaver.fromConnString(process.env.DATABASE_URL!);
-  await checkpointer.setup();
-
   // Create and compile workflow
+  // LangGraph Platform automatically provides a managed checkpointer
+  // No need to pass checkpointer parameter - platform handles it!
   const workflow = createWorkflow(retriever, llm);
-  return workflow.compile({ checkpointer });
+  return workflow.compile();
 };
