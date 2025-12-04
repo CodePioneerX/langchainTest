@@ -57,11 +57,13 @@ export function createWorkflow(
     try {
       // Skip evaluation if we're currently collecting contact info
       if (state.collectingContact) {
+        logger.debug("Skipping evaluation - currently collecting contact");
         return {};
       }
 
       // Need at least 2 messages (1 user, 1 AI) to evaluate
       if (state.messages.length < 3) {
+        logger.debug(`Not enough messages to evaluate (${state.messages.length})`);
         return { interestScore: 0 };
       }
 
@@ -70,6 +72,8 @@ export function createWorkflow(
         .slice(-6) // Last 6 messages (3 exchanges)
         .map((msg) => `${msg._getType()}: ${msg.content}`)
         .join("\n");
+
+      logger.debug(`Evaluating conversation:\n${conversationText}`);
 
       const evaluationPrompt = `You are a lead qualification expert for Botpress, a chatbot platform.
 
@@ -82,7 +86,13 @@ Scoring criteria:
 - 0-3: Just browsing, casual questions, no clear use case
 - 4-6: Showing some interest, asking specific questions, has a potential use case
 - 7-8: Strong interest, asking detailed implementation questions, discussing business needs
-- 9-10: Very high interest, asking about pricing/enterprise features/integration details, ready to implement
+- 9-10: Very high interest, saying they want to sign up, asking about pricing/enterprise features, ready to buy
+
+Key signals for high scores (9-10):
+- User says "I want to sign up" or "definitely like to sign up"
+- User asks "What would the pricing be?" or "How much does it cost?"
+- User discusses their business needs and company scale
+- User asks about implementation timelines
 
 Respond with ONLY a JSON object in this exact format:
 {"score": <number 0-10>, "reason": "<brief explanation>"}`;
@@ -90,21 +100,24 @@ Respond with ONLY a JSON object in this exact format:
       const evaluation = await llm.invoke(evaluationPrompt);
       const content = evaluation.content.toString();
 
-      // Extract JSON from response
-      const jsonMatch = content.match(/\{[^}]+\}/);
+      logger.debug(`LLM evaluation response: ${content}`);
+
+      // Extract JSON from response (more robust pattern)
+      const jsonMatch = content.match(/\{[\s\S]*?"score"[\s\S]*?\}/);
       if (!jsonMatch) {
-        logger.warn("Failed to parse interest evaluation");
+        logger.error(`Failed to parse JSON from LLM response: ${content}`);
         return { interestScore: 0 };
       }
 
       const result = JSON.parse(jsonMatch[0]);
       const score = Math.max(0, Math.min(10, result.score)); // Clamp to 0-10
 
-      logger.info(`Interest score: ${score}/10 - ${result.reason}`);
+      logger.info(`✓ Interest score: ${score}/10 - ${result.reason}`);
 
       return { interestScore: score };
     } catch (error: any) {
       logger.error("Error in interest evaluator node:", error);
+      logger.error("Stack trace:", error.stack);
       return { interestScore: 0 };
     }
   };
