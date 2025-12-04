@@ -50,6 +50,190 @@ export function createWorkflow(
     }
   };
 
+  // Interest Evaluator node - analyzes conversation to score lead quality
+  const interestEvaluatorNode = async (state: GraphStateType): Promise<Partial<GraphStateType>> => {
+    logger.debug("Interest Evaluator node: Analyzing lead interest");
+
+    try {
+      // Skip evaluation if we're currently collecting contact info
+      if (state.collectingContact) {
+        return {};
+      }
+
+      // Need at least 2 messages (1 user, 1 AI) to evaluate
+      if (state.messages.length < 3) {
+        return { interestScore: 0 };
+      }
+
+      // Use LLM to analyze conversation and score interest
+      const conversationText = state.messages
+        .slice(-6) // Last 6 messages (3 exchanges)
+        .map((msg) => `${msg._getType()}: ${msg.content}`)
+        .join("\n");
+
+      const evaluationPrompt = `You are a lead qualification expert for Botpress, a chatbot platform.
+
+Analyze this conversation and score the user's interest level from 0-10:
+
+Conversation:
+${conversationText}
+
+Scoring criteria:
+- 0-3: Just browsing, casual questions, no clear use case
+- 4-6: Showing some interest, asking specific questions, has a potential use case
+- 7-8: Strong interest, asking detailed implementation questions, discussing business needs
+- 9-10: Very high interest, asking about pricing/enterprise features/integration details, ready to implement
+
+Respond with ONLY a JSON object in this exact format:
+{"score": <number 0-10>, "reason": "<brief explanation>"}`;
+
+      const evaluation = await llm.invoke(evaluationPrompt);
+      const content = evaluation.content.toString();
+
+      // Extract JSON from response
+      const jsonMatch = content.match(/\{[^}]+\}/);
+      if (!jsonMatch) {
+        logger.warn("Failed to parse interest evaluation");
+        return { interestScore: 0 };
+      }
+
+      const result = JSON.parse(jsonMatch[0]);
+      const score = Math.max(0, Math.min(10, result.score)); // Clamp to 0-10
+
+      logger.info(`Interest score: ${score}/10 - ${result.reason}`);
+
+      return { interestScore: score };
+    } catch (error: any) {
+      logger.error("Error in interest evaluator node:", error);
+      return { interestScore: 0 };
+    }
+  };
+
+  // Contact Collector node - asks for contact info from high-interest leads
+  const contactCollectorNode = async (state: GraphStateType): Promise<Partial<GraphStateType>> => {
+    logger.debug("Contact Collector node: Collecting lead information");
+
+    try {
+      // Find the last user message (not AI message)
+      const lastUserMessage = state.messages
+        .slice()
+        .reverse()
+        .find(msg => msg._getType() === "human")
+        ?.content.toString() || "";
+
+      logger.debug(`Checking message for contact info: ${lastUserMessage.substring(0, 100)}`);
+
+      // Parse contact info from user's message
+      const emailRegex = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/i;
+      const emailMatch = lastUserMessage.match(emailRegex);
+
+      if (emailMatch) {
+        // Extract name and company if available
+        const nameMatch = lastUserMessage.match(/(?:my name is|i'm|i am|name[:\s]+)([a-z\s]+)/i);
+        const companyMatch = lastUserMessage.match(/(?:from|at|work at|company|for)[:\s]+([a-z0-9\s&.,'-]+?)(?:\s+and|\s+my|\s*$)/i);
+
+        const contactInfo = {
+          email: emailMatch[0],
+          name: nameMatch ? nameMatch[1].trim() : undefined,
+          company: companyMatch ? companyMatch[1].trim() : undefined,
+          collected: true,
+        };
+
+        logger.info(`✅ Collected contact info: ${JSON.stringify(contactInfo)}`);
+
+        const thankYouMessage = `\n\n---\n\nThank you${contactInfo.name ? ` ${contactInfo.name}` : ''}! I've noted your contact information. Our team will reach out to you shortly to discuss how Botpress can help with your chatbot needs.`;
+
+        return {
+          contactInfo,
+          collectingContact: false,
+          appendMessage: thankYouMessage,
+        };
+      }
+
+      // If no email found, ask for contact info
+      if (!state.collectingContact) {
+        const requestMessage = `\n\n---\n\nI can see you're interested in Botpress! I'd love to connect you with our team to discuss your specific needs. Could you share your email address${state.messages.some(m => m.content.toString().includes('company') || m.content.toString().includes('business')) ? ' and company name' : ''}?`;
+
+        return {
+          collectingContact: true,
+          appendMessage: requestMessage,
+        };
+      }
+
+      return {};
+    } catch (error: any) {
+      logger.error("Error in contact collector node:", error);
+      return { collectingContact: false };
+    }
+  };
+
+  // Slack Notifier node - sends lead info to Slack channel
+  const slackNotifierNode = async (state: GraphStateType): Promise<Partial<GraphStateType>> => {
+    logger.debug("Slack Notifier node: Sending lead notification");
+
+    try {
+      if (!state.contactInfo.collected) {
+        return {};
+      }
+
+      const slackWebhookUrl = process.env.SLACK_WEBHOOK_URL;
+      if (!slackWebhookUrl) {
+        logger.error("SLACK_WEBHOOK_URL not configured");
+        return {};
+      }
+
+      const { name, email, company } = state.contactInfo;
+
+      const slackMessage = {
+        blocks: [
+          {
+            type: "header",
+            text: {
+              type: "plain_text",
+              text: "🎯 New Qualified Lead from Botpress Bot",
+              emoji: true,
+            },
+          },
+          {
+            type: "section",
+            fields: [
+              { type: "mrkdwn", text: `*Name:*\n${name || 'Not provided'}` },
+              { type: "mrkdwn", text: `*Email:*\n${email}` },
+              { type: "mrkdwn", text: `*Company:*\n${company || 'Not provided'}` },
+              { type: "mrkdwn", text: `*Interest Score:*\n${state.interestScore}/10` },
+            ],
+          },
+          {
+            type: "context",
+            elements: [
+              {
+                type: "mrkdwn",
+                text: `Captured at: ${new Date().toLocaleString()}`,
+              },
+            ],
+          },
+        ],
+      };
+
+      const response = await fetch(slackWebhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(slackMessage),
+      });
+
+      if (!response.ok) {
+        logger.error(`Slack notification failed: ${response.statusText}`);
+      } else {
+        logger.info("Lead notification sent to Slack successfully");
+      }
+
+      return {};
+    } catch (error: any) {
+      logger.error("Error in Slack notifier node:", error);
+      return {};
+    }
+  };
+
   // Generator node - closure captures llm dependency
   const generatorNode = async (state: GraphStateType): Promise<Partial<GraphStateType>> => {
     logger.debug("Generator node: Generating response");
@@ -109,10 +293,18 @@ Guidelines:
 
       logger.debug(`Generated answer: ${answer.substring(0, 100)}...`);
 
+      // Check if we need to append a message (e.g., contact request)
+      let finalAnswer = answer;
+      if (state.appendMessage) {
+        finalAnswer = `${answer}\n\n${state.appendMessage}`;
+        logger.debug(`Appended message to response`);
+      }
+
       // Only add AI response message (user message already in state.messages)
       return {
-        answer,
-        messages: [new AIMessage(answer)],
+        answer: finalAnswer,
+        messages: [new AIMessage(finalAnswer)],
+        appendMessage: "", // Clear append message after using it
       };
     } catch (error: any) {
       logger.error("Error in generator node:", error);
@@ -128,15 +320,54 @@ Guidelines:
     }
   };
 
+  // Conditional routing function - decides if we should collect contact info
+  const shouldCollectContact = (state: GraphStateType): string => {
+    // If already collecting or collected, route to contact collector
+    if (state.collectingContact || state.contactInfo.collected) {
+      return "contact_collector";
+    }
+
+    // If interest score is high enough (7+), initiate contact collection
+    if (state.interestScore >= 7) {
+      return "contact_collector";
+    }
+
+    // Otherwise, go straight to generator (normal flow)
+    return "generator";
+  };
+
+  // Conditional routing after contact collection
+  const afterContactCollection = (state: GraphStateType): string => {
+    // If contact info was collected, send to Slack
+    if (state.contactInfo.collected) {
+      return "slack_notifier";
+    }
+
+    // If still collecting, end here (will continue on next message)
+    return "__end__";
+  };
+
   // Build and return graph (NOT compiled - caller compiles with checkpointer)
   const workflow = new StateGraph(GraphState)
     .addNode("retriever", retrieverNode)
     .addNode("generator", generatorNode)
+    .addNode("interest_evaluator", interestEvaluatorNode)
+    .addNode("contact_collector", contactCollectorNode)
+    .addNode("slack_notifier", slackNotifierNode)
     .addEdge("__start__", "retriever")
-    .addEdge("retriever", "generator")
-    .addEdge("generator", "__end__");
+    .addEdge("retriever", "interest_evaluator")
+    .addConditionalEdges("interest_evaluator", shouldCollectContact, {
+      contact_collector: "contact_collector",
+      generator: "generator",
+    })
+    .addEdge("contact_collector", "generator")
+    .addConditionalEdges("generator", afterContactCollection, {
+      slack_notifier: "slack_notifier",
+      __end__: "__end__",
+    })
+    .addEdge("slack_notifier", "__end__");
 
-  logger.info("✓ Workflow created (ready for compilation with checkpointer)");
+  logger.info("✓ Workflow created with lead qualification (ready for compilation with checkpointer)");
 
   return workflow;
 }

@@ -8,8 +8,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "index": "tsx scripts/index-botpress.ts",
-    "telegram": "tsx src/telegram/webhook.ts"
+    "index": "tsx scripts/index-botpress.ts"
   },
   "dependencies": {
     "@langchain/community": "^1.0.0",

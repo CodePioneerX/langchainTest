@@ -31,6 +31,35 @@ export const GraphState = Annotation.Root({
     reducer: (current, update) => current.concat(update),
     default: () => [],
   }),
+
+  // Lead qualification tracking
+  interestScore: Annotation<number>({
+    reducer: (_, update) => update,
+    default: () => 0,
+  }),
+
+  // Contact information collection
+  contactInfo: Annotation<{
+    name?: string;
+    email?: string;
+    company?: string;
+    collected: boolean;
+  }>({
+    reducer: (_, update) => update,
+    default: () => ({ collected: false }),
+  }),
+
+  // Track if we're in contact collection mode
+  collectingContact: Annotation<boolean>({
+    reducer: (_, update) => update,
+    default: () => false,
+  }),
+
+  // Message to append to bot response (e.g., contact request)
+  appendMessage: Annotation<string>({
+    reducer: (_, update) => update,
+    default: () => "",
+  }),
 });
 
 export type GraphStateType = typeof GraphState.State;
