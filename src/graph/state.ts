@@ -34,7 +34,7 @@ export const GraphState = Annotation.Root({
 
   // Lead qualification tracking
   interestScore: Annotation<number>({
-    reducer: (_, update) => update,
+    reducer: (current, update) => Math.max(current ?? 0, update ?? current ?? 0),
     default: () => 0,
   }),
 

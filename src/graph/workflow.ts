@@ -52,19 +52,20 @@ export function createWorkflow(
 
   // Interest Evaluator node - analyzes conversation to score lead quality
   const interestEvaluatorNode = async (state: GraphStateType): Promise<Partial<GraphStateType>> => {
-    logger.debug("Interest Evaluator node: Analyzing lead interest");
+    logger.debug(`Interest Evaluator node: Analyzing lead interest (current score: ${state.interestScore})`);
+    logger.debug(`State: messages=${state.messages.length}, collectingContact=${state.collectingContact}`);
 
     try {
       // Skip evaluation if we're currently collecting contact info
       if (state.collectingContact) {
-        logger.debug("Skipping evaluation - currently collecting contact");
-        return {};
+        logger.debug("Skipping evaluation - currently collecting contact (preserving score)");
+        return { interestScore: state.interestScore };
       }
 
       // Need at least 2 messages (1 user, 1 AI) to evaluate
       if (state.messages.length < 3) {
-        logger.debug(`Not enough messages to evaluate (${state.messages.length})`);
-        return { interestScore: 0 };
+        logger.debug(`Not enough messages to evaluate (${state.messages.length}), preserving current score: ${state.interestScore}`);
+        return { interestScore: state.interestScore };
       }
 
       // Use LLM to analyze conversation and score interest
@@ -106,19 +107,27 @@ Respond with ONLY a JSON object in this exact format:
       const jsonMatch = content.match(/\{[\s\S]*?"score"[\s\S]*?\}/);
       if (!jsonMatch) {
         logger.error(`Failed to parse JSON from LLM response: ${content}`);
-        return { interestScore: 0 };
+        logger.debug(`Preserving current interest score: ${state.interestScore}`);
+        return { interestScore: state.interestScore };
       }
 
-      const result = JSON.parse(jsonMatch[0]);
-      const score = Math.max(0, Math.min(10, result.score)); // Clamp to 0-10
+      try {
+        const result = JSON.parse(jsonMatch[0]);
+        const score = Math.max(0, Math.min(10, result.score ?? state.interestScore)); // Clamp to 0-10
 
-      logger.info(`✓ Interest score: ${score}/10 - ${result.reason}`);
+        logger.info(`✓ Interest score: ${score}/10 - ${result.reason}`);
 
-      return { interestScore: score };
+        return { interestScore: score };
+      } catch (parseError: any) {
+        logger.error(`JSON parse error: ${parseError.message}`);
+        logger.debug(`Preserving current interest score: ${state.interestScore}`);
+        return { interestScore: state.interestScore };
+      }
     } catch (error: any) {
       logger.error("Error in interest evaluator node:", error);
       logger.error("Stack trace:", error.stack);
-      return { interestScore: 0 };
+      logger.debug(`Preserving current interest score: ${state.interestScore}`);
+      return { interestScore: state.interestScore };
     }
   };
 
@@ -400,7 +409,7 @@ export const graph = async () => {
   const { ChatOpenAI } = await import("@langchain/openai");
 
   // Initialize retriever (uses Supabase for vector storage)
-  const retriever = await getRetriever(parseInt(process.env.TOP_K_RESULTS || "5", 10));
+  const retriever = await getRetriever(parseInt(process.env.TOP_K_RESULTS || "12", 10));
 
   // Initialize LLM
   const llm = new ChatOpenAI({
