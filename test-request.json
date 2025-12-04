@@ -1,0 +1,17 @@
+{
+  "assistant_id": "bot_workflow",
+  "input": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "What is Botpress?"
+      }
+    ]
+  },
+  "config": {
+    "configurable": {
+      "thread_id": "test-thread-1"
+    }
+  },
+  "stream_mode": "values"
+}

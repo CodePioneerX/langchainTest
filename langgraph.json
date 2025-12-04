@@ -4,5 +4,8 @@
   "graphs": {
     "bot_workflow": "./src/graph/workflow.ts:graph"
   },
+  "http": {
+    "app": "./src/telegram/routes.ts:app"
+  },
   "env": ".env"
 }
