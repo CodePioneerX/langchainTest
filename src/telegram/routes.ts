@@ -58,6 +58,8 @@ app.post("/telegram/webhook", async (c) => {
     // Start async processing
     (async () => {
       try {
+        console.log(`🤖 Starting workflow for thread ${threadId}`);
+
         const stream = client.runs.stream(
           threadId,
           "bot_workflow",
@@ -81,12 +83,16 @@ app.post("/telegram/webhook", async (c) => {
           }
         }
 
+        console.log(`✅ Workflow completed. Response length: ${aiResponse.length} chars`);
+
         // Send response back to Telegram
         if (aiResponse) {
           await sendTelegramMessage(chatId, aiResponse);
+        } else {
+          console.warn("⚠️ No AI response generated");
         }
       } catch (error: any) {
-        console.error("Error invoking agent:", error);
+        console.error("❌ Error invoking agent:", error);
         await sendTelegramMessage(chatId, "Sorry, I encountered an error processing your request.");
       }
     })();
@@ -106,11 +112,19 @@ app.post("/telegram/webhook", async (c) => {
 async function sendTelegramMessage(chatId: number, text: string): Promise<void> {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   if (!botToken) {
-    console.error("TELEGRAM_BOT_TOKEN not configured");
+    console.error("❌ TELEGRAM_BOT_TOKEN not configured in environment");
     return;
   }
 
+  // Telegram has 4096 character limit
+  if (text.length > 4096) {
+    console.warn(`⚠️ Message too long (${text.length} chars), truncating to 4096`);
+    text = text.substring(0, 4093) + "...";
+  }
+
   const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
+
+  console.log(`📤 Sending message to chat ${chatId}: ${text.substring(0, 100)}...`);
 
   try {
     const response = await fetch(url, {
@@ -124,11 +138,32 @@ async function sendTelegramMessage(chatId: number, text: string): Promise<void> 
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      console.error("Telegram API error:", error);
+      const errorText = await response.text();
+      console.error(`❌ Telegram API error (${response.status}):`, errorText);
+
+      // Retry without Markdown if parsing failed
+      if (errorText.includes("parse") || errorText.includes("markdown")) {
+        console.log("🔄 Retrying without Markdown formatting");
+        const retryResponse = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: text,
+          }),
+        });
+
+        if (retryResponse.ok) {
+          console.log("✅ Message sent successfully (plain text)");
+        } else {
+          console.error("❌ Retry also failed:", await retryResponse.text());
+        }
+      }
+    } else {
+      console.log("✅ Message sent successfully to Telegram");
     }
   } catch (error) {
-    console.error("Failed to send Telegram message:", error);
+    console.error("❌ Failed to send Telegram message:", error);
   }
 }
 
